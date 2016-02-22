@@ -1,0 +1,6 @@
+name = Stolas Leukas Rating
+description = Alter content types competition and result for add rating based on competition level for each user.
+core = 7.x
+
+configure = admin/config/user-interface/sl-categories
+stylesheets[all][] = css/sl_rating.css

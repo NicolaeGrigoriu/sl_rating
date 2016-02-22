@@ -1,0 +1,13 @@
+#block-quicktabs-ratings .views-row-first,
+#block-quicktabs-ratings .views-row-first .points{
+  font-weight: bold;
+  background-color: #ffff66;
+  color: #dd4814;
+}
+.service-links a .img-responsive {
+    display: inline;
+}
+#block-views-cover-image-block .img-responsive {
+  width: 100%;
+  height: auto;
+}

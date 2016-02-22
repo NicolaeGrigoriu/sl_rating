@@ -1,0 +1,176 @@
+<?php
+/**
+ * @file
+ * Alter add/edit competition content type form to perform rating increment for each indicated user.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function sl_rating_menu() {
+  $items['admin/config/user-interface/sl-categories'] = array(
+    'title' => 'Stolas Leukas Competition Categories',
+    'description' => 'Provide interface for management of competition points based on its level.',
+    'weight' => 1,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('sl_rating_competition_level'),
+    'access arguments' => array('access administration pages'),
+    'file' => 'sl_rating.admin.inc',
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function sl_rating_form_probe_result_node_form_alter(&$form, &$form_state, $form_id) {
+/*  $form['field_tull_category'][LANGUAGE_NONE]['#states'] = array(
+    'visible' => array(
+      ':input[name="field_proba[und]"]' => array('value' => 'tull'),
+    ),
+  );
+  $form['field_sparring_category'][LANGUAGE_NONE]['#states'] = array(
+    'visible' => array(
+      ':input[name="field_proba[und]"]' => array('value' => 'sparring'),
+      'xor',
+      ':input[name="field_proba[und]"]' => array('value' => 'kickbox'),
+    ),
+  );*/
+/*  $form['field_sparring_category'][LANGUAGE_NONE]['#states'] = array(
+    'visible' => array(
+      ':input[name="field_proba[und]"]' => array('value' => 'kickbox'),
+    ),
+  );*/
+  // Hide title on node add.
+  if (arg(0) == 'node' && arg(1) == 'add') {
+    $form['title']['#access'] = 0;
+  }
+
+  // Add custom validate and submit functions.
+  $form['#validate'][] = 'sl_rating_probe_result_validate';
+  $form['#submit'][] = 'sl_rating_probe_result_submit';
+  $form['actions']['delete']['#submit'][] = 'sl_probe_result_delete';
+}
+
+/**
+ * Check if this result was already registered.
+ * @param $form
+ *  From render array.
+ *
+ * @param $form_state
+ *  From state values before submit.
+ */
+function sl_rating_probe_result_validate(&$form, $form_state) {
+  if (arg(1) == 'add') {
+    $values = $form_state['values'];
+    $uid = $values['field_competitor'][LANGUAGE_NONE][0]['target_id'];
+    $cid = $values['field_competition'][LANGUAGE_NONE][0]['target_id'];
+    $probe = $values['field_proba'][LANGUAGE_NONE][0]['value'];
+
+    // Get node of the result of the competition based on probe and user id.
+    $result_id = _sl_rating_participated($cid, $uid, $probe);
+    if ($result_id != FALSE) {
+      $link = l(t('here'), 'node/' . $result_id, array('attributes' => array('target' => '_blank')));
+      form_set_error('field_competitor[und][0][target_id]', t('This competitor was registered for this probe previously. You can access its result !link',
+          array(
+            '!link' => $link)
+        )
+      );
+    }
+  }
+}
+
+function sl_rating_probe_result_submit(&$form, $form_state) {
+  $sl_rating_points = variable_get('sl_rating', array());
+  $values = $form_state['values'];
+  $cid = $values['field_competition'][LANGUAGE_NONE][0]['target_id'];
+  $place = $values['field_place'][LANGUAGE_NONE][0]['value'];
+  $level = db_select('field_data_field_level', 'level')
+    ->fields('level', array('field_level_value'))
+    ->condition('entity_id', $cid)
+    ->execute()
+    ->fetchField();
+
+  $points = $sl_rating_points["level_$level"]["place_$place"];
+  $form_state['rate_points'] = $points;
+
+  $uid = $values['field_competitor'][LANGUAGE_NONE][0]['target_id'];
+  $user = user_load($uid);
+
+  $probe = $values['field_proba'][LANGUAGE_NONE][0]['value'];
+  $rating_field = "field_rating_$probe";
+
+  $user_rating_field = !empty($user->$rating_field) ? $user-> $rating_field : array();
+  $user_rate_value = (!empty($user_rating_field)) ? $user_rating_field[LANGUAGE_NONE][0]['value'] : 0;
+
+  $edit = array(
+    "field_rating_$probe" => array(
+      LANGUAGE_NONE => array(
+        array('value' => $user_rate_value + $points)
+      ),
+    ),
+  );
+  user_save($user, $edit);
+}
+
+function sl_probe_result_delete($form, &$form_state) {
+  $values = $form_state['values'];
+
+  $sl_rating_points = variable_get('sl_rating', array());
+  $cid = $values['field_competition'][LANGUAGE_NONE][0]['target_id'];
+  $place = $values['field_place'][LANGUAGE_NONE][0]['value'];
+  $level = db_select('field_data_field_level', 'level')
+    ->fields('level', array('field_level_value'))
+    ->condition('entity_id', $cid)
+    ->execute()
+    ->fetchField();
+  $points = $sl_rating_points["level_$level"]["place_$place"];
+
+  $uid = $values['field_competitor'][LANGUAGE_NONE][0]['target_id'];
+  $user = user_load($uid);
+
+  $probe = $values['field_proba'][LANGUAGE_NONE][0]['value'];
+  $rating_field = "field_rating_$probe";
+
+  $user_rating_field = !empty($user->$rating_field) ? $user-> $rating_field : array();
+  $user_rate_value = (!empty($user_rating_field)) ? $user_rating_field[LANGUAGE_NONE][0]['value'] : 0;
+
+  $edit = array(
+    "field_rating_$probe" => array(
+      LANGUAGE_NONE => array(
+        array('value' => $user_rate_value - $points)
+      ),
+    ),
+  );
+  user_save($user, $edit);
+}
+
+/**
+ * Get id of the node which registered the participation of the user in a competition on a specified probe.
+ *
+ * @param int $cid
+ *  Competition ID.
+ *
+ * @param int $uid
+ *  Participant(User) ID.
+ *
+ * @param string $probe
+ *  Value probe: it could be sparring, tull or kickbox.
+ *
+ * @return bool|string
+ *  If no results have been found, return FALSE,
+ *    else return node ID.
+ */
+function _sl_rating_participated($cid, $uid, $probe) {
+  $result = db_query('SELECT field_data_field_competition.entity_id FROM field_data_field_competition JOIN (SELECT field_data_field_proba.entity_id FROM field_data_field_proba JOIN (SELECT entity_id FROM field_data_field_competitor WHERE field_competitor_target_id = :uid) AS COMPETITORS ON COMPETITORS.entity_id = field_data_field_proba.entity_id WHERE field_proba_value = :probe) AS PROBES ON PROBES.entity_id = field_data_field_competition.entity_id WHERE field_competition_target_id = :cid',
+    array(
+      ':uid'=> $uid,
+      ':probe' => $probe,
+      ':cid' => $cid,
+    )
+  );
+  foreach ($result as $row) {
+    return $row->entity_id;
+  }
+  return FALSE;
+}
